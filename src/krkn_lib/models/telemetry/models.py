@@ -13,6 +13,8 @@ from krkn_lib.models.k8s import (
     VmisStatus,
     ResiliencyReport,
 )
+from krkn_lib.gpu.telemetry import GpuScenarioTelemetry
+
 
 relevant_event_reasons: frozenset[str] = frozenset(
     [
@@ -98,6 +100,8 @@ class ScenarioTelemetry:
     """
     Cluster events collected during the chaos run
     """
+    gpu: GpuScenarioTelemetry | None = None
+
 
     def set_cluster_events(self, events: list[ClusterEvent]):
         """
@@ -145,6 +149,15 @@ class ScenarioTelemetry:
                 ]
             else:
                 self.cluster_events = []
+            gpu = json_object.get("gpu")
+            self.gpu = (
+                gpu
+                if isinstance(gpu, GpuScenarioTelemetry)
+                else GpuScenarioTelemetry.from_dict(gpu)
+                if isinstance(gpu, dict)
+                else None
+            )
+
 
             if (
                 self.parameters_base64 is not None
@@ -178,6 +191,7 @@ class ScenarioTelemetry:
             self.affected_vmis = VmisStatus()
             self.affected_nodes = []
             self.cluster_events = []
+            self.gpu = None
 
     def to_json(self) -> str:
         return json.dumps(self, default=lambda o: o.__dict__, indent=4)
@@ -788,9 +802,11 @@ class ChaosRunTelemetry:
             self.scenarios = [ScenarioTelemetry(s) for s in scenarios]
 
             self.node_summary_infos = [
-                NodeInfo(j) for j in json_dict.get("node_summary_infos")
+                NodeInfo(j) for j in (json_dict.get("node_summary_infos") or [])
             ]
-            self.node_taints = [Taint(t) for t in json_dict.get("node_taints")]
+            self.node_taints = [
+                Taint(t) for t in (json_dict.get("node_taints") or [])
+            ]
             self.total_node_count = json_dict.get("total_node_count")
             self.cloud_infrastructure = json_dict.get("cloud_infrastructure")
             self.cloud_type = json_dict.get("cloud_type")

@@ -2,13 +2,38 @@ import datetime
 import os
 import time
 import uuid
+import unittest
 from unittest import mock
 
 from krkn_lib.elastic.krkn_elastic import KrknElastic
 from krkn_lib.models.elastic.models import ElasticAlert, ElasticMetric
-from krkn_lib.models.telemetry import ChaosRunTelemetry
+from krkn_lib.gpu import GpuScenarioTelemetry
+from krkn_lib.models.telemetry import ChaosRunTelemetry, ScenarioTelemetry
 from krkn_lib.tests import BaseTest
 from krkn_lib.utils import SafeLogger
+
+
+class TestGpuElasticMapping(unittest.TestCase):
+    def test_existing_nested_scenarios_get_gpu_mapping_before_write(self):
+        client = KrknElastic.__new__(KrknElastic)
+        client.safe_logger = mock.MagicMock(spec=SafeLogger)
+        client.es = mock.MagicMock()
+        indices = client.es.indices
+        indices.get_mapping.return_value = {"runs": {"mappings": {"properties": {
+            "scenarios": {"type": "nested", "properties": {"scenario": {"type": "text"}}}
+        }}}}
+        run = ChaosRunTelemetry()
+        scenario = ScenarioTelemetry()
+        scenario.gpu = GpuScenarioTelemetry(fault_type="vram-pressure")
+        run.scenarios.append(scenario)
+
+        self.assertNotEqual(client.push_telemetry(run, "runs"), -1)
+        calls = [call[0] for call in client.es.mock_calls]
+        self.assertLess(calls.index("indices.put_mapping"), calls.index("index"))
+        scenarios = indices.put_mapping.call_args.kwargs["body"]["properties"]["scenarios"]
+        self.assertEqual(scenarios, {
+            "type": "nested", "properties": {"gpu": {"type": "object", "enabled": False}},
+        })
 
 
 class TestKrknElastic(BaseTest):
@@ -268,9 +293,20 @@ class TestKrknElastic(BaseTest):
         }
         mock_requests_get.return_value = mock_response
 
-        mock_es_instance = mock.MagicMock()
+        mock_es_instance.indices.exists.return_value = True
+        mock_es_instance.indices.get_mapping.return_value = {
+            "test-index": {
+                "mappings": {
+                    "properties": {
+                        "scenarios": {
+                            "type": "nested",
+                            "properties": {},
+                        }
+                    }
+                }
+            }
+        }
         mock_es_instance.index.side_effect = Exception("timeout")
-        mock_es_class.return_value = mock_es_instance
 
         mock_logger = mock.MagicMock(spec=SafeLogger)
         client = KrknElastic(mock_logger, "http://localhost", 9200)
@@ -464,7 +500,6 @@ class TestKrknElasticOpenSearch(BaseTest):
         }
         mock_requests_get.return_value = mock_response
 
-        mock_client = mock.MagicMock()
         mock_opensearch_class.return_value = mock_client
 
         client = KrknElastic(

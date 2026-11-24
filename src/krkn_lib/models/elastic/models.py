@@ -9,6 +9,7 @@ from elasticsearch_dsl import (
     Integer,
     Keyword,
     Nested,
+    Object,
     Text,
 )
 
@@ -138,6 +139,7 @@ class ElasticScenarioTelemetry(InnerDoc):
     affected_pods = Nested(ElasticPodsStatus)
     affected_vmis = Nested(ElasticVmisStatus)
     affected_nodes = Nested(ElasticAffectedNodes, multi=True)
+    gpu = Object(enabled=False)
 
 
 class ElasticNodeInfo(InnerDoc):
@@ -245,6 +247,7 @@ class ElasticChaosRunTelemetry(Document):
                 end_timestamp=sc.end_timestamp,
                 scenario=sc.scenario,
                 scenario_type=sc.scenario_type,
+                gpu=sc.gpu.to_dict() if sc.gpu is not None else None,
                 exit_status=sc.exit_status,
                 parameters_base64=sc.parameters_base64,
                 parameters=sc.parameters,

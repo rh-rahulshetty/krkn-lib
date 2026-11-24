@@ -103,6 +103,16 @@ NVML support (`poetry install -E gpu`) and pass `local_node_name="that-node"`.
 NVML data is then attached only to that explicit Kubernetes node. Do not set
 `local_node_name` when running on a laptop.
 
+### Node-local observations
+
+On a GPU host or inside a pod with NVIDIA device access, call
+`snapshot_local_gpus(fields=["memory_free_bytes", "gpu_utilization_percent"])`.
+The read-only query needs no Kubernetes client or GPU Operator. Pass
+`executable` if the driver binary is mounted outside `PATH`. The snapshot
+describes devices visible to the process; it does not infer Kubernetes node
+identity or workload assignments. The Krkn worker reports observations for
+the selected devices, so the controller does not need local GPU access.
+
 ## Data and access requirements
 
 - Node `capacity` and `allocatable` are both preserved, including `0`.

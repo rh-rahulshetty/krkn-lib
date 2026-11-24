@@ -198,6 +198,39 @@ class KrknElastic:
             return True
         return False
 
+    def _ensure_gpu_telemetry_mapping(self, index: str) -> None:
+        """Store GPU records without dynamically mapping measurement values."""
+        indices = self.es.indices
+        gpu_field = {"type": "object", "enabled": False}
+
+        def properties(scenario_type):
+            return {"properties": {"scenarios": {
+                "type": scenario_type, "properties": {"gpu": gpu_field},
+            }}}
+
+        try:
+            mappings = indices.get_mapping(index=index)
+        except Exception as exc:
+            if not self._is_not_found_error(exc):
+                raise
+            try:
+                indices.create(index=index, body={"mappings": properties("object")})
+                return
+            except Exception as create_error:
+                if getattr(create_error, "error", None) != "resource_already_exists_exception":
+                    raise
+            mappings = indices.get_mapping(index=index)
+
+        if not mappings:
+            raise ValueError(f"Telemetry index {index} has no mapping")
+        for name, definition in mappings.items():
+            scenarios = definition["mappings"].get("properties", {}).get("scenarios", {})
+            gpu = scenarios.get("properties", {}).get("gpu")
+            if gpu is None:
+                indices.put_mapping(index=name, body=properties(scenarios.get("type", "object")))
+            elif gpu.get("type", "object") != "object" or gpu.get("enabled") is not False:
+                raise ValueError(f"Telemetry index {name} has an incompatible scenarios.gpu mapping")
+
     def upload_data_to_elasticsearch(self, item: dict, index: str = "") -> int:
         """uploads captured data in item dictionary to Elasticsearch
 
@@ -338,6 +371,8 @@ class KrknElastic:
         if not index:
             raise Exception("index cannot be None or empty")
         try:
+            if any(scenario.gpu is not None for scenario in telemetry.scenarios):
+                self._ensure_gpu_telemetry_mapping(index)
             elastic_chaos = ElasticChaosRunTelemetry(telemetry)
             time_start = time.time()
             # Use to_dict() and low-level index() for compatibility

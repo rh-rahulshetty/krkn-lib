@@ -20,6 +20,7 @@ from .models import (
     GpuSnapshot,
     Measurement,
     WorkloadMapping,
+    _select_snapshot_measurements,
     utc_now,
 )
 from .inventory import (
@@ -28,6 +29,7 @@ from .inventory import (
     node_from_kubernetes,
     stack_components,
 )
+from .metadata import _node_ready_status
 from .nvml import LocalNvmlSource
 from .parsers import (
     NvidiaQuery,
@@ -94,34 +96,6 @@ def _snapshot_targets(
         f"device {uuid} absent from inventory" for uuid in sorted(wanted)
     )
     return targets, errors
-
-
-def _measurements_with_status(
-    device_uuid: str,
-    scope: str,
-    fields: set[str],
-    source: str,
-    status: Availability,
-    reason: str,
-) -> list[Measurement]:
-    result = []
-    for field_name in sorted(fields):
-        unit, value_type = field_definition(field_name)
-        result.append(
-            Measurement(
-                device_uuid=device_uuid,
-                scope=scope,
-                field=field_name,
-                value=None,
-                unit=unit,
-                value_type=value_type,
-                source=source,
-                observed_at=utc_now(),
-                status=status,
-                reason=reason,
-            )
-        )
-    return result
 
 
 def _error(exc: Exception) -> str:
@@ -445,6 +419,11 @@ class NvidiaGpuInspector:
                     self.operator_namespace,
                 )
                 if is_candidate(node, known, selected):
+                    ready = _node_ready_status(source.status)
+                    if ready in ("False", "Unknown") and node.name != self.local_node_name:
+                        node.status = node.topology_status = Availability.UNAVAILABLE
+                        node.reason = node.topology_reason = f"Kubernetes node Ready={ready}"
+                        node.stack.tools["nvidia-smi"] = Availability.UNAVAILABLE
                     nodes[node.name] = node
         except Exception as exc:
             errors.append(_error(exc))
@@ -558,69 +537,44 @@ class NvidiaGpuInspector:
                 queried = parse_gpu_xml(response.stdout, fields)
                 source = response.source
 
-            for measurement in queried.measurements:
-                if source not in measurement.source:
-                    measurement.source = f"{source}:{measurement.source}"
-            present = {
-                (item.device_uuid, item.field)
-                for item in queried.measurements
-            }
             fresh_uuids = {
                 item.uuid
                 for item in [*queried.gpus, *queried.mig_partitions]
                 if item.uuid
             }
-            measurements = [
-                item
-                for item in queried.measurements
-                if item.device_uuid in uuids
-            ]
-            errors: list[str] = []
-            for uuid in sorted(uuids):
-                missing_device = uuid not in fresh_uuids
-                if missing_device:
-                    errors.append(
-                        f"{name}: device {uuid} absent from fresh NVIDIA query"
-                    )
-                missing_fields = {
-                    field_name
+            measurements, missing_devices = _select_snapshot_measurements(
+                queried.measurements,
+                sorted(uuids),
+                fresh_uuids,
+                fields,
+                {
+                    field_name: field_definition(field_name)
                     for field_name in fields
-                    if (uuid, field_name) not in present
-                }
-                measurements.extend(
-                    _measurements_with_status(
-                        uuid,
-                        scopes.get(uuid, "physical_gpu"),
-                        missing_fields,
-                        source,
-                        (
-                            Availability.UNAVAILABLE
-                            if missing_device
-                            else Availability.UNKNOWN
-                        ),
-                        (
-                            "device absent from fresh NVIDIA query"
-                            if missing_device
-                            else "field absent for selected device"
-                        ),
-                    )
-                )
+                },
+                scopes,
+                source,
+            )
+            errors = [
+                f"{name}: device {uuid} absent from fresh NVIDIA query"
+                for uuid in missing_devices
+            ]
             return measurements, errors
         except Exception as exc:
             reason = _error(exc)
             source = "nvml" if name == self.local_node_name else "pod-exec"
-            measurements = []
-            for uuid in sorted(uuids):
-                measurements.extend(
-                    _measurements_with_status(
-                        uuid,
-                        scopes.get(uuid, "physical_gpu"),
-                        fields,
-                        source,
-                        Availability.UNAVAILABLE,
-                        reason,
-                    )
-                )
+            measurements, _ = _select_snapshot_measurements(
+                [],
+                sorted(uuids),
+                set(),
+                fields,
+                {
+                    field_name: field_definition(field_name)
+                    for field_name in fields
+                },
+                scopes,
+                source,
+                unavailable_reason=reason,
+            )
             return measurements, [f"{name}: {reason}"]
 
     def snapshot(

@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 
 from kubernetes import client
 
+from .metadata import is_gpu_resource, normalize_count
+
 from .models import (
     Availability,
     Conflict,
@@ -37,10 +39,10 @@ def _resource_count(
     allocatable: Mapping[str, object],
 ) -> ResourceCount:
     def integer(value: object) -> int | None:
-        try:
-            return int(str(value))
-        except (TypeError, ValueError):
+        quantity = normalize_count(value)
+        if quantity is None or quantity != quantity.to_integral_value():
             return None
+        return int(quantity)
 
     return ResourceCount(
         name=name,
@@ -50,11 +52,7 @@ def _resource_count(
 
 
 def _gpu_resource(name: str) -> bool:
-    return (
-        name == "nvidia.com/gpu"
-        or name.startswith("nvidia.com/gpu.")
-        or name.startswith("nvidia.com/mig-")
-    )
+    return is_gpu_resource(name)
 
 
 def _relevant_labels(labels: Mapping[str, str]) -> dict[str, str]:

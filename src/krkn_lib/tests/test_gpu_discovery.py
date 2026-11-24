@@ -166,6 +166,20 @@ class GpuDiscoveryTests(unittest.TestCase):
             self.api, context="ibm-test", reader=self.reader
         )
 
+    def test_unready_node_keeps_inventory_without_driver_access(self):
+        down = node("unreachable")
+        down.status.conditions = [Obj(type="Ready", status="Unknown")]
+        self.api.nodes[down.metadata.name] = down
+        with patch.object(self.reader, "query_node", wraps=self.reader.query_node) as queries:
+            inventory = self.inspector.discover_inventory()
+
+        healthy, unreachable = inventory.nodes
+        self.assertEqual(healthy.status, Availability.AVAILABLE)
+        self.assertEqual(unreachable.status, Availability.UNAVAILABLE)
+        self.assertEqual(unreachable.resources[0].allocatable, 1)
+        self.assertIn("Ready=Unknown", unreachable.reason)
+        self.assertNotIn("unreachable", {call.args[0] for call in queries.call_args_list})
+
     def test_zero_allocatable_node_remains_and_zero_metric_is_available(self):
         inventory = self.inspector.discover_inventory()
         self.assertEqual(len(inventory.nodes), 1)

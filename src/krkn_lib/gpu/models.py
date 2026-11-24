@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -215,3 +216,103 @@ class GpuSnapshot(JsonRecord):
     observed_at: str
     measurements: list[Measurement]
     errors: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> GpuSnapshot:
+        """Rebuild a typed snapshot, including enum and alternative evidence."""
+
+        measurements = []
+        for item in value.get("measurements") or []:
+            if isinstance(item, Measurement):
+                measurements.append(item)
+                continue
+            status = item["status"]
+            measurements.append(
+                Measurement(
+                    device_uuid=item["device_uuid"],
+                    scope=item["scope"],
+                    field=item["field"],
+                    value=item.get("value"),
+                    unit=item.get("unit"),
+                    value_type=item["value_type"],
+                    source=item["source"],
+                    observed_at=item["observed_at"],
+                    status=(
+                        status
+                        if isinstance(status, Availability)
+                        else Availability(status)
+                    ),
+                    reason=item.get("reason"),
+                    alternatives=[
+                        evidence
+                        if isinstance(evidence, Evidence)
+                        else Evidence(
+                            source=evidence["source"],
+                            value=evidence.get("value"),
+                            observed_at=evidence["observed_at"],
+                        )
+                        for evidence in (item.get("alternatives") or [])
+                    ],
+                )
+            )
+        return cls(
+            context=value.get("context"),
+            observed_at=value["observed_at"],
+            measurements=measurements,
+            errors=list(value.get("errors") or []),
+        )
+
+
+def _select_snapshot_measurements(
+    measurements: list[Measurement],
+    device_uuids: Sequence[str],
+    available_device_uuids: set[str],
+    fields: set[str],
+    field_metadata: Mapping[str, tuple[str | None, str]],
+    device_scopes: Mapping[str, str],
+    source: str,
+    unavailable_reason: str = "device absent from fresh NVIDIA query",
+) -> tuple[list[Measurement], list[str]]:
+    """Select UUIDs and represent missing devices/fields without discarding
+    their distinct availability statuses."""
+
+    selected_uuids = set(device_uuids)
+    available = selected_uuids & available_device_uuids
+    selected = [
+        item for item in measurements if item.device_uuid in selected_uuids
+    ]
+    present = {
+        (item.device_uuid, item.field)
+        for item in measurements
+        if item.device_uuid in selected_uuids
+    }
+    missing_devices = sorted(selected_uuids - available)
+    for uuid in sorted(selected_uuids):
+        missing_device = uuid not in available
+        for field_name in sorted(fields):
+            if (uuid, field_name) in present:
+                continue
+            unit, value_type = field_metadata[field_name]
+            selected.append(
+                Measurement(
+                    device_uuid=uuid,
+                    scope=device_scopes.get(uuid, "physical_gpu"),
+                    field=field_name,
+                    value=None,
+                    unit=unit,
+                    value_type=value_type,
+                    source=source,
+                    observed_at=utc_now(),
+                    status=(
+                        Availability.UNAVAILABLE
+                        if missing_device
+                        else Availability.UNKNOWN
+                    ),
+                    reason=(
+                        unavailable_reason
+                        if missing_device
+                        else "field absent for selected device"
+                    ),
+                )
+            )
+    return selected, missing_devices
