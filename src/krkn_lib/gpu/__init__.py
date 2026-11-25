@@ -15,6 +15,7 @@ from .nvml import LocalNvmlSource
 from .reader import AccessPod
 from .telemetry import (
     GpuObservation,
+    GpuRestoration,
     GpuScenarioTelemetry,
     GpuWorkerTelemetry,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "GpuNode",
     "GpuObservation",
     "GpuPodCandidate",
+    "GpuRestoration",
     "GpuScenarioTelemetry",
     "GpuSnapshot",
     "GpuWorkerTelemetry",

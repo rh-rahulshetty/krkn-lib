@@ -9,6 +9,18 @@ from krkn_lib.gpu.models import GpuSnapshot, JsonRecord
 
 
 @dataclass
+class GpuRestoration(JsonRecord):
+    """Device policy restoration evidence, distinct from observed metrics."""
+
+    status: str
+    reason: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> GpuRestoration:
+        return cls(value["status"], value.get("reason"))
+
+
+@dataclass
 class GpuWorkerTelemetry(JsonRecord):
     """GPU injector outcome for a worker node."""
 
@@ -19,6 +31,8 @@ class GpuWorkerTelemetry(JsonRecord):
         str, dict[str, int | float | bool]
     ] = field(default_factory=dict)
     observation_errors: dict[str, list[str]] = field(default_factory=dict)
+    restoration_safe: bool | None = None
+    device_restorations: dict[str, GpuRestoration] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> GpuWorkerTelemetry:
@@ -37,6 +51,11 @@ class GpuWorkerTelemetry(JsonRecord):
                 for phase, errors in (
                     (value.get("observation_errors") or {}).items()
                 )
+            },
+            restoration_safe=value.get("restoration_safe"),
+            device_restorations={
+                uuid: item if isinstance(item, GpuRestoration) else GpuRestoration.from_dict(item)
+                for uuid, item in (value.get("device_restorations") or {}).items()
             },
         )
 

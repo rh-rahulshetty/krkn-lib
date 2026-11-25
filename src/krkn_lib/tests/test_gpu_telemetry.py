@@ -4,6 +4,7 @@ import unittest
 from krkn_lib.gpu.models import Availability, Evidence, GpuSnapshot, Measurement
 from krkn_lib.gpu.telemetry import (
     GpuObservation,
+    GpuRestoration,
     GpuScenarioTelemetry,
     GpuWorkerTelemetry,
 )
@@ -48,6 +49,10 @@ class GpuTelemetryTests(unittest.TestCase):
                         "GPU-1": {"injected": True, "bytes": 1024}
                     },
                     observation_errors={"started": ["sample unavailable"]},
+                    restoration_safe=False,
+                    device_restorations={
+                        "GPU-1": GpuRestoration("unverified", reason="driver timeout")
+                    },
                 )
             ],
             observations=[
@@ -118,6 +123,11 @@ class GpuTelemetryTests(unittest.TestCase):
         self.assertEqual(measurement.alternatives[0].value, 71)
         self.assertEqual(
             gpu.workers[0].device_execution_stats["GPU-1"]["bytes"], 1024
+        )
+        self.assertFalse(gpu.workers[0].restoration_safe)
+        self.assertEqual(
+            gpu.workers[0].device_restorations["GPU-1"],
+            GpuRestoration("unverified", reason="driver timeout"),
         )
         self.assertEqual(
             gpu.workers[0].observation_errors,
